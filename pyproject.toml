@@ -1,0 +1,17 @@
+[project]
+name = "frappe_bench_dev"
+authors = [
+    { name = "Sohanur Rahman", email = "dev.sohanur653@gmail.com" }
+]
+description = "bench dev: run a Frappe site in development mode (auto-reload) and open it in your browser"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
+dynamic = ["version"]
+dependencies = [
+    # "frappe>=15.0.0" Installed and managed by bench.
+]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
