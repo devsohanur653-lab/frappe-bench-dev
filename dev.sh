@@ -5,6 +5,7 @@
 #
 # Starts `bench serve` (auto-reloads Python) and `bench watch` (rebuilds JS/CSS),
 # waits until the site answers, then opens it in your browser.
+# With several sites and no --site, it shows a menu (last pick is the default).
 # Ctrl+C stops everything it started.
 #
 # Works on Linux and macOS, on a remote server through VS Code Remote-SSH,
@@ -88,20 +89,71 @@ list_sites() {
   done
 }
 
-if [ -z "$SITE" ]; then
-  SITE="$(sed -n 's/.*"default_site"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-          sites/common_site_config.json 2>/dev/null | head -1)"
-  [ -n "$SITE" ] || SITE="$(cat sites/currentsite.txt 2>/dev/null)"
-  if [ -z "$SITE" ]; then
-    SITES="$(list_sites)"
-    case "$(printf '%s\n' "$SITES" | grep -c .)" in
-      0) die "No sites found in $BENCH_DIR/sites." ;;
-      1) SITE="$SITES" ;;
-      *) die "Several sites found, choose one with --site: $(echo $SITES)" ;;
-    esac
-  fi
+# The last site you picked in this bench is remembered and offered as the default next time.
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/frappe-bench-dev"
+LAST_SITE_FILE="$CACHE_DIR/last-site$(printf '%s' "$BENCH_DIR" | tr '/' '_')"
+
+site_exists() { [ -n "$1" ] && [ -f "sites/$1/site_config.json" ]; }
+
+bench_default_site() {
+  local s
+  s="$(sed -n 's/.*"default_site"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+       sites/common_site_config.json 2>/dev/null | head -1)"
+  [ -n "$s" ] || s="$(cat sites/currentsite.txt 2>/dev/null)"
+  echo "$s"
+}
+
+choose_site() { # interactive menu; prints the chosen site on stdout
+  local default="$1"; shift
+  local sites=("$@") i ans mark
+  {
+    echo
+    echo "This bench has ${#sites[@]} sites:"
+    for i in "${!sites[@]}"; do
+      mark=""; [ "${sites[$i]}" = "$default" ] && mark="  <- default"
+      printf '  %2d) %s%s\n' $((i + 1)) "${sites[$i]}" "$mark"
+    done
+  } >&2
+  while true; do
+    if [ -n "$default" ]; then
+      printf 'Choose a site [1-%d or name, Enter = %s]: ' "${#sites[@]}" "$default" >&2
+    else
+      printf 'Choose a site [1-%d or name]: ' "${#sites[@]}" >&2
+    fi
+    IFS= read -r ans </dev/tty || exit 1
+    if [ -z "$ans" ] && [ -n "$default" ]; then echo "$default"; return; fi
+    if [[ "$ans" =~ ^[0-9]+$ ]] && [ "$ans" -ge 1 ] && [ "$ans" -le "${#sites[@]}" ]; then
+      echo "${sites[$((ans - 1))]}"; return
+    fi
+    site_exists "$ans" && { echo "$ans"; return; }
+    echo "  Not a valid choice, try again." >&2
+  done
+}
+
+if [ -n "$SITE" ]; then
+  site_exists "$SITE" || die "Site '$SITE' does not exist in $BENCH_DIR/sites. Available: $(echo $(list_sites))"
+else
+  SITES=()
+  while IFS= read -r s; do SITES+=("$s"); done < <(list_sites)
+  DEFAULT="$(cat "$LAST_SITE_FILE" 2>/dev/null)"
+  site_exists "$DEFAULT" || DEFAULT="$(bench_default_site)"
+  site_exists "$DEFAULT" || DEFAULT=""
+
+  case "${#SITES[@]}" in
+    0) die "No sites found in $BENCH_DIR/sites." ;;
+    1) SITE="${SITES[0]}" ;;
+    *)
+      if [ -t 0 ] && { : </dev/tty; } 2>/dev/null; then
+        SITE="$(choose_site "$DEFAULT" "${SITES[@]}")" || exit 1
+        mkdir -p "$CACHE_DIR" 2>/dev/null && printf '%s\n' "$SITE" >"$LAST_SITE_FILE" 2>/dev/null
+      elif [ -n "$DEFAULT" ]; then
+        SITE="$DEFAULT"
+      else
+        die "This bench has several sites, pass one with --site: $(echo "${SITES[@]}")"
+      fi
+      ;;
+  esac
 fi
-[ -f "sites/$SITE/site_config.json" ] || die "Site '$SITE' does not exist in $BENCH_DIR/sites."
 
 URL="http://localhost:${PORT}"
 
