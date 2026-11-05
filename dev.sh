@@ -2,11 +2,12 @@
 # frappe-bench-dev: one command to start a Frappe development session.
 #
 #   ./dev.sh [--site SITE] [--port PORT] [--bench DIR] [--no-watch] [--no-browser]
+#            [--keep-dev-mode] [--no-dev-mode]
 #
-# Starts `bench serve` (auto-reloads Python) and `bench watch` (rebuilds JS/CSS),
-# waits until the site answers, then opens it in your browser.
-# With several sites and no --site, it shows a menu (last pick is the default).
-# Ctrl+C stops everything it started.
+# Turns on developer_mode for the site and clears its cache, starts `bench serve`
+# (auto-reloads Python) and `bench watch` (rebuilds JS/CSS), waits until the site
+# answers, then opens it in your browser. With several sites and no --site, it
+# shows a menu. Ctrl+C stops everything and puts developer_mode back.
 #
 # Works on Linux and macOS, on a remote server through VS Code Remote-SSH,
 # and on Windows through WSL.
@@ -18,8 +19,10 @@ SITE="${SITE:-}"
 BENCH_DIR="${BENCH_DIR:-}"
 WATCH=1
 OPEN_BROWSER=1
+DEV_MODE=1        # turn developer_mode on
+KEEP_DEV_MODE=0   # leave it on after Ctrl+C
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -28,6 +31,8 @@ while [ $# -gt 0 ]; do
     --bench)      BENCH_DIR="$2"; shift 2 ;;
     --no-watch)   WATCH=0; shift ;;
     --no-browser) OPEN_BROWSER=0; shift ;;
+    --no-dev-mode)   DEV_MODE=0; shift ;;
+    --keep-dev-mode) KEEP_DEV_MODE=1; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -74,7 +79,9 @@ if [ "$(uname -s)" = "Linux" ] && [ ! -O "$BENCH_DIR" ] && command -v sg >/dev/n
       export FBD_REEXEC=1
       exec sg "$BENCH_GROUP" -c "$(printf '%q ' "$0" --bench "$BENCH_DIR" --port "$PORT" \
         ${SITE:+--site "$SITE"} $([ $WATCH = 0 ] && echo --no-watch) \
-        $([ $OPEN_BROWSER = 0 ] && echo --no-browser))"
+        $([ $OPEN_BROWSER = 0 ] && echo --no-browser) \
+        $([ $DEV_MODE = 0 ] && echo --no-dev-mode) \
+        $([ $KEEP_DEV_MODE = 1 ] && echo --keep-dev-mode))"
     fi
     [ -w "$BENCH_DIR/logs" ] || warn "You may not have write access to $BENCH_DIR (owned by group '$BENCH_GROUP')."
   fi
@@ -188,14 +195,26 @@ kill_tree() {
   kill -TERM "$pid" 2>/dev/null
 }
 
+RESTORE_DEV_MODE=""   # value to put back on exit ("None" removes the key)
+
 cleanup() {
+  local rc=$?
   trap - EXIT INT TERM
-  [ ${#PIDS[@]} -eq 0 ] && exit 0
-  echo; say "Stopping..."
-  for pid in "${PIDS[@]}"; do kill_tree "$pid"; done
-  wait 2>/dev/null
-  say "Stopped."
-  exit 0
+  if [ ${#PIDS[@]} -gt 0 ]; then
+    echo; say "Stopping..."
+    for pid in "${PIDS[@]}"; do kill_tree "$pid"; done
+    wait 2>/dev/null
+  fi
+  if [ -n "$RESTORE_DEV_MODE" ]; then
+    if bench --site "$SITE" set-config developer_mode "$RESTORE_DEV_MODE" >/dev/null 2>&1; then
+      bench --site "$SITE" clear-cache >/dev/null 2>&1
+      say "Developer mode: turned back off"
+    else
+      warn "Could not restore developer_mode, check sites/$SITE/site_config.json"
+    fi
+  fi
+  [ ${#PIDS[@]} -gt 0 ] && say "Stopped."
+  exit "$rc"
 }
 trap cleanup EXIT INT TERM
 
@@ -213,6 +232,44 @@ open_url() {
 mkdir -p logs
 say "Bench: $BENCH_DIR"
 say "Site:  $SITE"
+
+# developer mode + cache
+json_get() { # json_get FILE KEY -> prints value as JSON, or __MISSING__
+  python3 - "$1" "$2" <<'PY' 2>/dev/null || echo __MISSING__
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+print(json.dumps(d[sys.argv[2]]) if sys.argv[2] in d else "__MISSING__")
+PY
+}
+
+if [ "$DEV_MODE" = 1 ]; then
+  RAW="$(json_get "sites/$SITE/site_config.json" developer_mode)"
+  EFFECTIVE="$RAW"
+  [ "$RAW" = "__MISSING__" ] && EFFECTIVE="$(json_get sites/common_site_config.json developer_mode)"
+  case "$EFFECTIVE" in
+    1|true) say "Developer mode: already on" ;;
+    *)
+      bench --site "$SITE" set-config developer_mode 1 >/dev/null 2>&1 \
+        || die "Could not turn on developer_mode in sites/$SITE/site_config.json"
+      if [ "$KEEP_DEV_MODE" = 1 ]; then
+        say "Developer mode: turned on"
+      else
+        case "$RAW" in
+          __MISSING__) RESTORE_DEV_MODE="None" ;;
+          false) RESTORE_DEV_MODE="false" ;;
+          *) RESTORE_DEV_MODE="$RAW" ;;
+        esac
+        say "Developer mode: turned on (goes back off when you press Ctrl+C)"
+      fi
+      ;;
+  esac
+fi
+
+say "Clearing cache..."
+bench --site "$SITE" clear-cache >/dev/null 2>&1 || warn "clear-cache failed"
 
 if port_in_use "$PORT"; then
   if site_up; then

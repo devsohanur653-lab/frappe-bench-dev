@@ -48,10 +48,12 @@ Working on a bench over **VS Code Remote-SSH** usually means the site runs in pr
 |---|---|---|
 | 🐍 Python change | `bench restart` | ✅ reloads automatically |
 | 🎨 JS / CSS change | `bench build` | ✅ rebuilds automatically |
+| 🛠️ Developer mode | `set-config developer_mode 1` + `clear-cache` | ✅ on for the session, off again on exit |
+| 🧹 Stale cache | `bench clear-cache` | ✅ cleared on start |
 | 🌐 Open the site | find port → forward → open | ✅ opens in your browser |
 | ⏹️ Stop | `supervisorctl stop` | ✅ **Ctrl+C** |
 
-Production keeps running untouched on its own port.
+Production keeps running on its own port.
 
 ---
 
@@ -96,6 +98,8 @@ bench --site mysite.local dev      # a specific site, no menu
 bench dev --port 8031              # another port
 bench dev --no-watch               # Python only, skip bench watch
 bench dev --no-browser             # don't open a browser
+bench dev --keep-dev-mode          # leave developer_mode on after Ctrl+C
+bench dev --no-dev-mode            # don't touch developer_mode
 ```
 
 What you'll see:
@@ -103,6 +107,8 @@ What you'll see:
 ```text
 ==> Bench: /home/me/my-bench
 ==> Site:  mysite.local
+==> Developer mode: turned on (goes back off when you press Ctrl+C)
+==> Clearing cache...
 ==> Starting dev server on http://localhost:8030   (log: logs/dev-serve.log)
 ==> Starting bench watch           (log: logs/dev-watch.log)
 ==> Waiting for the server...
@@ -120,7 +126,22 @@ What you'll see:
 | `--port PORT` | `8030` | Port for the dev server |
 | `--no-watch` | | Skip `bench watch` (faster start when you only touch Python) |
 | `--no-browser` | | Don't open a browser |
+| `--keep-dev-mode` | | Leave `developer_mode` on after Ctrl+C |
+| `--no-dev-mode` | | Don't change `developer_mode` (cache is still cleared) |
 | `--help` | | Show usage |
+
+### Developer mode and cache
+
+After you pick a site, `bench dev`:
+
+1. Turns on `developer_mode` in `sites/SITE/site_config.json`, unless it's already on
+   (in the site's config or in `common_site_config.json`).
+2. Runs `bench --site SITE clear-cache`.
+3. On **Ctrl+C**, puts `developer_mode` back exactly as it was (removes the key, or restores `0`)
+   and clears the cache again. If it was already on, it's left alone.
+
+With developer mode on you can create and edit DocTypes from the UI and they're saved as JSON
+files in your app, ready to commit.
 
 > [!TIP]
 > The dev server runs with `--site`, so `http://localhost:PORT` opens your site directly.
@@ -222,11 +243,8 @@ Requires Frappe **v15+** and Node/Yarn for `bench watch` (any bench already has 
 | 🧹 Stale cached data | `bench --site SITE clear-cache` |
 
 > [!TIP]
-> To create or edit DocTypes from the UI and save them as files in your app, turn on developer mode once per site:
-> ```bash
-> bench --site SITE set-config developer_mode 1
-> bench --site SITE clear-cache
-> ```
+> `bench dev` turns on developer mode for the session, so DocTypes you create or edit from the UI
+> are saved as files in your app. See [Developer mode and cache](#developer-mode-and-cache).
 
 ---
 
@@ -262,6 +280,11 @@ PermissionError: [Errno 13] Permission denied: '.../logs/bench.log'
 
 - `bench watch` writes to `sites/assets`, which production serves too. Users may see in-progress JS/CSS.
 - Background jobs and the scheduler run on production's workers, which pick up new Python only after a production restart.
+- `developer_mode` lives in the site's config, so while `bench dev` runs it's on for **production too**:
+  users see full error tracebacks, and DocType edits made from the UI write files into the app.
+  It goes back off when you press Ctrl+C. Use `--no-dev-mode` if that's a problem on this site.
+- If the terminal is killed hard (`kill -9`, lost SSH session with no tmux), the cleanup can't run.
+  Check `developer_mode` in `sites/SITE/site_config.json` afterwards.
 - Testing something destructive? Use a copy of the site (`bench new-site` + restore a backup).
 
 ---
@@ -299,7 +322,8 @@ It also activates the bench owner's group by itself.
 
 ```bash
 cd /path/to/your-bench          # or any folder inside it
-/path/to/frappe-bench-dev/dev.sh [--site NAME] [--port PORT] [--bench DIR] [--no-watch] [--no-browser]
+/path/to/frappe-bench-dev/dev.sh [--site NAME] [--port PORT] [--bench DIR] [--no-watch] [--no-browser] \
+                                 [--keep-dev-mode] [--no-dev-mode]
 ```
 
 ---
@@ -313,11 +337,13 @@ cd /path/to/your-bench          # or any folder inside it
 
 1. Frappe loads `frappe_bench_dev/commands.py` from every app in `apps.txt`. That's how `bench dev` exists.
 2. Picks the site: `--site`, the only site, or the menu.
-3. Checks the port: reuses a running dev server for the site, refuses if something else is there.
-4. Starts `bench --site SITE serve --port PORT` and `bench watch`, each in its own process group.
-5. Polls `/api/method/ping` until the site answers (up to 90 s).
-6. Opens the URL via VS Code's `$BROWSER`, `open` (macOS), `wslview` (WSL) or the default browser (Linux).
-7. Streams both logs. On Ctrl+C it stops every process it started, children included.
+3. Turns on `developer_mode` (remembering the old value) and runs `clear-cache`.
+4. Checks the port: reuses a running dev server for the site, refuses if something else is there.
+5. Starts `bench --site SITE serve --port PORT` and `bench watch`, each in its own process group.
+6. Polls `/api/method/ping` until the site answers (up to 90 s).
+7. Opens the URL via VS Code's `$BROWSER`, `open` (macOS), `wslview` (WSL) or the default browser (Linux).
+8. Streams both logs. On Ctrl+C it stops every process it started (children included),
+   restores `developer_mode` and clears the cache again.
 
 </details>
 

@@ -139,6 +139,57 @@ def resolve_site(bench_path, explicit_site):
 	die(f"This bench has several sites, pass one with --site: {' '.join(sites)}")
 
 
+# ------------------------------------------------------------ developer mode
+_MISSING = object()
+
+
+def _read_json(path):
+	try:
+		with open(path) as f:
+			return json.load(f)
+	except Exception:
+		return {}
+
+
+def site_config_path(bench_path, site):
+	return os.path.join(bench_path, "sites", site, "site_config.json")
+
+
+def developer_mode_state(bench_path, site):
+	"""Return (effective_on, raw value in site_config or _MISSING)."""
+	site_conf = _read_json(site_config_path(bench_path, site))
+	common_conf = _read_json(os.path.join(bench_path, "sites", "common_site_config.json"))
+	raw = site_conf.get("developer_mode", _MISSING)
+	effective = raw if raw is not _MISSING else common_conf.get("developer_mode", 0)
+	return bool(effective), raw
+
+
+def set_site_config(bench_path, site, key, value):
+	"""value "None" removes the key (Frappe's own convention)."""
+	import frappe
+	from frappe.installer import update_site_config
+
+	# update_site_config takes a per-site file lock, which needs the site initialised
+	frappe.init(site=site, sites_path=os.path.join(bench_path, "sites"))
+	try:
+		update_site_config(key, value, site_config_path=site_config_path(bench_path, site))
+	finally:
+		frappe.destroy()
+
+
+def clear_cache(bench_cmd, bench_path, site):
+	r = subprocess.run(
+		[bench_cmd, "--site", site, "clear-cache"],
+		cwd=bench_path,
+		stdout=subprocess.DEVNULL,
+		stderr=subprocess.PIPE,
+		text=True,
+	)
+	if r.returncode != 0:
+		warn(f"clear-cache failed: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode}")
+	return r.returncode == 0
+
+
 # ---------------------------------------------------------------- networking
 def port_in_use(port):
 	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -215,9 +266,18 @@ class Processes:
 @click.option("--port", default=DEFAULT_PORT, show_default=True, type=int, help="Port for the dev server")
 @click.option("--no-watch", is_flag=True, default=False, help="Do not run bench watch (JS/CSS)")
 @click.option("--no-browser", is_flag=True, default=False, help="Do not open a browser")
+@click.option(
+	"--keep-dev-mode", is_flag=True, default=False, help="Leave developer_mode on after Ctrl+C"
+)
+@click.option(
+	"--no-dev-mode", is_flag=True, default=False, help="Do not touch developer_mode (cache is still cleared)"
+)
 @click.pass_context
-def dev(ctx, port, no_watch, no_browser):
+def dev(ctx, port, no_watch, no_browser, keep_dev_mode, no_dev_mode):
 	"""Run a site in development mode with auto-reload and open it in the browser.
+
+	Turns on developer_mode for the site and clears its cache. On Ctrl+C,
+	developer_mode goes back to what it was (unless --keep-dev-mode).
 
 	\b
 	Examples:
@@ -242,6 +302,7 @@ def dev(ctx, port, no_watch, no_browser):
 
 	procs = Processes()
 	serve_proc = None
+	restore_dev_mode = _MISSING  # value to put back on exit, if we changed it
 
 	def handle_term(signum, frame):
 		raise KeyboardInterrupt
@@ -249,6 +310,26 @@ def dev(ctx, port, no_watch, no_browser):
 	signal.signal(signal.SIGTERM, handle_term)
 
 	try:
+		# developer mode + cache
+		if not no_dev_mode:
+			dev_on, raw = developer_mode_state(bench_path, site)
+			if dev_on:
+				say("Developer mode: already on")
+			else:
+				try:
+					set_site_config(bench_path, site, "developer_mode", 1)
+				except Exception as e:
+					die(f"Could not turn on developer_mode in sites/{site}/site_config.json: {e}")
+				if not keep_dev_mode:
+					restore_dev_mode = "None" if raw is _MISSING else raw
+				say(
+					"Developer mode: turned on"
+					+ ("" if keep_dev_mode else " (goes back off when you press Ctrl+C)")
+				)
+
+		say("Clearing cache...")
+		clear_cache(bench_cmd, bench_path, site)
+
 		if port_in_use(port):
 			if site_up(url):
 				say(f"Port {port} already serves a site, reusing it.")
@@ -313,6 +394,14 @@ def dev(ctx, port, no_watch, no_browser):
 		if procs.procs:
 			say("Stopping...")
 			procs.stop()
+		if restore_dev_mode is not _MISSING:
+			try:
+				set_site_config(bench_path, site, "developer_mode", restore_dev_mode)
+				clear_cache(bench_cmd, bench_path, site)
+				say("Developer mode: turned back off")
+			except Exception as e:
+				warn(f"Could not restore developer_mode, check sites/{site}/site_config.json: {e}")
+		if procs.procs:
 			say("Stopped.")
 
 
