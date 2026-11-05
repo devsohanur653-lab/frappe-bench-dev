@@ -1,60 +1,97 @@
-# frappe-bench-dev
+<div align="center">
 
-A small Frappe app that adds one bench command:
+# ⚡ frappe-bench-dev
+
+**Live development mode for any Frappe bench, in one command.**
+
+Save your code, refresh the browser, see the change. No `bench restart`, no `bench build`.
+
+![Frappe](https://img.shields.io/badge/Frappe-v15%2B-0089FF?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![Platforms](https://img.shields.io/badge/runs%20on-Linux%20%7C%20macOS%20%7C%20WSL-555?style=flat-square)
+![VS Code Remote-SSH](https://img.shields.io/badge/VS%20Code-Remote--SSH%20ready-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 ```bash
 bench dev
 ```
 
-It runs a site in development mode, where code changes show up live without a bench restart,
-and opens it in your browser.
+</div>
 
-## The problem it solves
+---
 
-When you work on a Frappe bench on a remote server through **VS Code Remote-SSH**, the site is
-usually running in production mode (supervisor + gunicorn). Every change then means:
+## Contents
 
-1. `bench restart` (or `supervisorctl restart`) for Python changes
-2. `bench build` for JS/CSS changes
-3. Finding the right port, forwarding it, opening the browser, logging in again
+- [Why](#-why)
+- [Install](#-install)
+- [Usage](#-usage)
+- [Choosing a site](#-choosing-a-site)
+- [VS Code Remote-SSH](#%EF%B8%8F-vs-code-remote-ssh)
+- [Where it works](#-where-it-works)
+- [What reloads by itself](#-what-reloads-by-itself)
+- [Shared benches](#-shared-benches)
+- [Running next to production](#%EF%B8%8F-running-next-to-production)
+- [Troubleshooting](#-troubleshooting)
+- [Without installing: `dev.sh`](#-without-installing-devsh)
+- [How it works](#%EF%B8%8F-how-it-works)
 
-`bench dev` replaces all of that with a development session that runs next to production:
+---
 
-| | Production (supervisor) | `bench dev` session |
+## 💡 Why
+
+Working on a bench over **VS Code Remote-SSH** usually means the site runs in production mode
+(supervisor + gunicorn). Every change costs you a restart, a build, and a hunt for the right port.
+
+`bench dev` starts a development session **next to** production:
+
+| | Production (supervisor) | `bench dev` |
 |---|---|---|
-| Python change | `bench restart` | Reloads automatically |
-| JS / CSS change | `bench build` | Rebuilds automatically (`bench watch`) |
-| Opening the site | Find the port, forward it, open it | Opens in your browser automatically |
-| Stopping | `supervisorctl stop` | **Ctrl+C** |
+| 🐍 Python change | `bench restart` | ✅ reloads automatically |
+| 🎨 JS / CSS change | `bench build` | ✅ rebuilds automatically |
+| 🌐 Open the site | find port → forward → open | ✅ opens in your browser |
+| ⏹️ Stop | `supervisorctl stop` | ✅ **Ctrl+C** |
 
 Production keeps running untouched on its own port.
 
-## Install (once per bench)
+---
+
+## 📦 Install
+
+Once per bench:
 
 ```bash
 cd /path/to/your-bench
 bench get-app https://github.com/devsohanur653-lab/frappe-bench-dev
+bench dev --help        # check it's there
 ```
 
-That's all. The app only adds the `bench dev` command. It has no DocTypes, and you **don't**
-need to run `bench install-app` on any site.
+> [!NOTE]
+> The app only adds the `bench dev` command. It has no DocTypes and you **don't** need
+> `bench install-app` on any site.
 
-Check that it's there:
+> [!WARNING]
+> **Production benches:** if `sites/common_site_config.json` has `"restart_supervisor_on_update": true`,
+> `bench get-app` restarts production when it finishes. If you don't want that (for example the
+> database isn't migrated yet), install by hand instead. It does the same steps without the restart:
+>
+> ```bash
+> cd /path/to/your-bench
+> git clone https://github.com/devsohanur653-lab/frappe-bench-dev apps/frappe_bench_dev
+> env/bin/python -m pip install -e apps/frappe_bench_dev
+> [ -n "$(tail -c1 sites/apps.txt)" ] && echo >> sites/apps.txt   # apps.txt may lack a final newline
+> echo frappe_bench_dev >> sites/apps.txt
+> ```
+
+**Update** to the latest version: `cd apps/frappe_bench_dev && git pull`
+
+**Remove:** `bench remove-app frappe_bench_dev`
+
+---
+
+## 🚀 Usage
 
 ```bash
-bench dev --help
-```
-
-To remove it later:
-
-```bash
-bench remove-app frappe_bench_dev
-```
-
-## Usage
-
-```bash
-bench dev                          # pick a site (menu if the bench has several), port 8030
+bench dev                          # pick a site (menu if several), port 8030
 bench --site mysite.local dev      # a specific site, no menu
 bench dev --port 8031              # another port
 bench dev --no-watch               # Python only, skip bench watch
@@ -63,7 +100,7 @@ bench dev --no-browser             # don't open a browser
 
 What you'll see:
 
-```
+```text
 ==> Bench: /home/me/my-bench
 ==> Site:  mysite.local
 ==> Starting dev server on http://localhost:8030   (log: logs/dev-serve.log)
@@ -75,34 +112,32 @@ What you'll see:
 ==> Save code and refresh the browser. Ctrl+C to stop.
 ```
 
-Edit code, save, refresh the browser. Press **Ctrl+C** in that terminal when you're done.
-It stops everything it started, including child processes.
-
 ### Options
 
 | Option | Default | What it does |
 |---|---|---|
-| `bench --site NAME dev` | menu / auto | Site to serve. `--site` goes **before** `dev`, like every other bench site command |
+| `bench --site NAME dev` | menu / auto | Site to serve. `--site` goes **before** `dev`, like other bench site commands |
 | `--port PORT` | `8030` | Port for the dev server |
 | `--no-watch` | | Skip `bench watch` (faster start when you only touch Python) |
 | `--no-browser` | | Don't open a browser |
 | `--help` | | Show usage |
 
-The dev server runs with `--site`, so `http://localhost:PORT` opens your site directly.
-You don't need a hosts file entry like `127.0.0.1 mysite.local`.
+> [!TIP]
+> The dev server runs with `--site`, so `http://localhost:PORT` opens your site directly.
+> No hosts file entry like `127.0.0.1 mysite.local` is needed.
 
-## Choosing a site
+---
+
+## 🧭 Choosing a site
 
 | Situation | What happens |
 |---|---|
 | `bench --site NAME dev` | That site is used |
-| The bench has one site | It's used automatically |
-| The bench has several sites | A menu asks which one |
-| Several sites, no terminal to ask in (for example run from another script) | The last site you picked, else the bench's `default_site`. If neither exists, it stops and lists the sites |
+| One site in the bench | Used automatically |
+| Several sites | A menu asks which one |
+| Several sites, no terminal to ask in | Last site you picked, else `default_site`. Neither? It stops and lists the sites |
 
-The menu looks like this:
-
-```
+```text
 This bench has 3 sites:
    1) alpha.local
    2) beta.local  <- default
@@ -110,137 +145,186 @@ This bench has 3 sites:
 Choose a site [1-3 or name, Enter = beta.local]:
 ```
 
-Type a number or a site name, or press **Enter** for the default.
-The default is the site you picked last time in this bench, otherwise the bench's `default_site`.
-Your last pick is stored per bench in `~/.cache/frappe-bench-dev/`.
+Type a number or a name, or press **Enter** for the default.
+Your last pick is remembered per bench in `~/.cache/frappe-bench-dev/`.
 
-## Working on a remote server with VS Code Remote-SSH
+---
 
-This is the main use case. `bench dev` runs **on the server**, in VS Code's integrated terminal.
-Your laptop can run Windows, macOS or Linux, and it works the same way on all of them.
+## 🖥️ VS Code Remote-SSH
 
-1. Connect to the server with **Remote-SSH** and open the bench folder.
-2. Open a terminal in VS Code (`` Ctrl+` ``) and run `bench dev`.
-3. VS Code forwards the port and opens the site in **your laptop's default browser**.
-   If VS Code asks whether to open the external link, click **Open**.
+`bench dev` runs **on the server**, in VS Code's terminal. Your laptop can be Windows, macOS or Linux.
 
-If the browser doesn't open:
+1. Connect with **Remote-SSH** and open the bench folder.
+2. Open a terminal (`` Ctrl+` ``) and run `bench dev`.
+3. VS Code forwards the port and opens the site in **your laptop's browser**.
+   If it asks to open an external link, click **Open**.
 
-- Open the **Ports** tab in VS Code's bottom panel. The port (`8030`) should be listed with a
-  green dot. If it isn't, click **Add Port** and type it.
-- Then open `http://localhost:8030` on your laptop.
+<details>
+<summary><b>Browser didn't open?</b></summary>
 
-To view the site inside VS Code instead of your browser:
+<br>
 
-- Command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), then **Simple Browser: Show**, then `http://localhost:8030`, or
-- In the **Ports** tab, hover the port and click **Preview in Editor**.
+- Open the **Ports** tab in the bottom panel. `8030` should have a green dot. If not, **Add Port** → `8030`.
+- Open `http://localhost:8030` on your laptop.
 
-Chrome or Firefox is better for real debugging, because you get the full developer tools.
+</details>
 
-Without VS Code, use an SSH tunnel from your laptop and open `http://localhost:8030`:
+<details>
+<summary><b>View the site inside VS Code</b></summary>
+
+<br>
+
+- `Ctrl+Shift+P` / `Cmd+Shift+P` → **Simple Browser: Show** → `http://localhost:8030`, or
+- **Ports** tab → hover the port → **Preview in Editor**.
+
+Chrome or Firefox is still better for debugging: you get the full developer tools.
+
+</details>
+
+<details>
+<summary><b>Plain SSH, no VS Code</b></summary>
+
+<br>
+
+Tunnel the port from your laptop, then open `http://localhost:8030`:
 
 ```bash
 ssh -L 8030:localhost:8030 user@your-server
 ```
 
-## Where it works
+</details>
+
+---
+
+## 🌍 Where it works
 
 | Setup | Works | Browser opens on |
-|---|---|---|
-| Remote Linux server via VS Code Remote-SSH (laptop on Windows, macOS or Linux) | Yes | Your laptop's default browser |
-| Ubuntu / Linux desktop with a local bench | Yes | Default browser |
-| macOS with a local bench | Yes | Default browser (`open`) |
-| Windows | Only inside **WSL** (Frappe doesn't run natively on Windows) | Windows default browser (`wslview`) |
-| Plain SSH (no VS Code) | Yes | Nothing opens automatically. Use an SSH tunnel |
+|---|:---:|---|
+| Remote server via VS Code Remote-SSH (any laptop OS) | ✅ | Your laptop's default browser |
+| Ubuntu / Linux desktop | ✅ | Default browser |
+| macOS | ✅ | Default browser |
+| Windows | ✅ via **WSL** | Windows default browser |
+| Plain SSH | ✅ | Use an SSH tunnel |
 
-Requirements: Frappe v15 or newer, and Node/Yarn for `bench watch` (already needed by any bench).
+Requires Frappe **v15+** and Node/Yarn for `bench watch` (any bench already has them).
 
-## What reloads by itself and what doesn't
+---
+
+## 🔄 What reloads by itself
 
 | You changed | What to do |
 |---|---|
-| Python (`.py`): controllers, APIs, hooks code | Nothing. The dev server restarts itself, then refresh the browser |
-| JS / CSS / Vue in `public/` | Nothing while `bench watch` runs. Refresh the browser |
-| `hooks.py` | Usually reloads. If not, Ctrl+C and run `bench dev` again |
-| DocType JSON, new fields, patches | `bench --site SITE migrate` |
-| After `git pull` or switching branches | `bench --site SITE backup`, then `bench --site SITE migrate` |
-| Cached data looks stale | `bench --site SITE clear-cache` |
+| 🐍 Python: controllers, APIs | Nothing. Refresh the browser |
+| 🎨 JS / CSS / Vue in `public/` | Nothing while `bench watch` runs. Refresh the browser |
+| 🪝 `hooks.py` | Usually reloads. If not, Ctrl+C and `bench dev` again |
+| 🧱 DocType JSON, new fields, patches | `bench --site SITE migrate` |
+| 🔀 After `git pull` / switching branch | `bench --site SITE backup` → `bench --site SITE migrate` |
+| 🧹 Stale cached data | `bench --site SITE clear-cache` |
 
-To create or edit DocTypes from the UI and have them saved as files in your app, also turn on developer mode
-(once per site):
+> [!TIP]
+> To create or edit DocTypes from the UI and save them as files in your app, turn on developer mode once per site:
+> ```bash
+> bench --site SITE set-config developer_mode 1
+> bench --site SITE clear-cache
+> ```
 
-```bash
-bench --site SITE set-config developer_mode 1
-bench --site SITE clear-cache
-```
+---
 
-## Shared benches (bench owned by another user)
+## 👥 Shared benches
 
-On team servers the bench often belongs to one user (for example `frappe`) and developers are added
-to that user's group:
+On team servers the bench often belongs to one user (say `frappe`) and developers join that user's group:
 
 ```bash
 sudo usermod -aG frappe your-user
 ```
 
-A new group only applies after you log in again, and VS Code's server keeps the old session.
-Until then, **every** bench command fails with `Permission denied: .../logs/bench.log`,
-including `bench dev`. Fix it with one of these:
+A new group only applies after a fresh login, and VS Code's server keeps the old one.
+Until then **every** bench command fails with:
 
-- Run it through the group for now: `sg frappe -c "bench dev"`
-- Activate the group in this terminal: `newgrp frappe`, then `bench dev`
-- Fix it for good: command palette, then **Remote-SSH: Kill VS Code Server on Host**, then reconnect
-- Or use `dev.sh` (below), which switches the group by itself
+```text
+PermissionError: [Errno 13] Permission denied: '.../logs/bench.log'
+```
 
-## Running next to production
+| Fix | How |
+|---|---|
+| Right now, once | `sg frappe -c "bench dev"` |
+| This terminal | `newgrp frappe`, then `bench dev` |
+| For good | `Ctrl+Shift+P` → **Remote-SSH: Kill VS Code Server on Host** → reconnect |
+| No app needed | Use [`dev.sh`](#-without-installing-devsh), which switches the group by itself |
 
-- The dev server and production use **the same database** when they serve the same site.
-  Records you create, edit or delete while testing are real.
-- `bench watch` writes built assets to `sites/assets`, which production serves too.
-  Production users may see your in-progress JS/CSS.
-- Background jobs and the scheduler still run through production's workers, which load new Python
-  code only after a production restart.
-- Prefer a copy of the site (`bench new-site` + restore a backup) if you test anything destructive.
+---
 
-## Troubleshooting
+## ⚠️ Running next to production
+
+> [!CAUTION]
+> The dev server and production share **the same database** when they serve the same site.
+> Records you create, edit or delete while testing are real.
+
+- `bench watch` writes to `sites/assets`, which production serves too. Users may see in-progress JS/CSS.
+- Background jobs and the scheduler run on production's workers, which pick up new Python only after a production restart.
+- Testing something destructive? Use a copy of the site (`bench new-site` + restore a backup).
+
+---
+
+## 🩺 Troubleshooting
+
+<details>
+<summary><b>Show common problems</b></summary>
+
+<br>
 
 | Message / symptom | Cause and fix |
 |---|---|
-| `No such command 'dev'` | The app isn't in this bench. Run `bench get-app https://github.com/devsohanur653-lab/frappe-bench-dev` |
-| `Permission denied: .../logs/bench.log` | The bench owner's group isn't active in this terminal (see Shared benches) |
-| `Port 8030 is busy with something else` | Another program, or a `bench serve` started without `--site`, holds the port. Stop it, or use `--port 8031` |
-| `Port 8030 already serves a site, reusing it` | A dev server is already running there. `bench dev` reuses it and doesn't start a second one |
+| `No such command 'dev'` | App isn't in this bench. See [Install](#-install) |
+| `Permission denied: .../logs/bench.log` | Group not active in this terminal. See [Shared benches](#-shared-benches) |
+| `Port 8030 is busy with something else` | Another program, or a `bench serve` without `--site`, holds it. Stop it or use `--port 8031` |
+| `Port 8030 already serves a site, reusing it` | A dev server is already running there. It's reused, not duplicated |
 | Browser shows `localhost does not exist` | That server was started without `--site`. Stop it and use `bench dev` |
-| `Site 'x' does not exist` | Check the name, or run without `--site` to get the menu |
-| `Server did not come up in 90s` | The last lines of `logs/dev-serve.log` are printed. Usually a Python error or a missing `migrate` |
-| Page loads but nothing changes after editing | JS/CSS: is `bench watch` running? (Don't use `--no-watch`.) DocType: run `migrate`. Then hard-refresh with `Ctrl+Shift+R` / `Cmd+Shift+R` |
-| Browser doesn't open | Open `http://localhost:PORT` yourself. On a remote server, check the VS Code **Ports** tab |
+| `Site 'x' does not exist` | Check the name, or drop `--site` to get the menu |
+| `Server did not come up in 90s` | The end of `logs/dev-serve.log` is printed. Usually a Python error or a missing `migrate` |
+| Edits don't show up | JS/CSS: is `bench watch` running? DocType: `migrate`. Then hard-refresh: `Ctrl+Shift+R` / `Cmd+Shift+R` |
+| Browser doesn't open | Open `http://localhost:PORT` yourself; on a server, check the **Ports** tab |
 
 Logs: `logs/dev-serve.log` (web server, Python errors) and `logs/dev-watch.log` (JS/CSS build).
-Both are also streamed in the terminal while `bench dev` runs.
+Both also stream in the terminal while `bench dev` runs.
 
-## Without installing the app: `dev.sh`
+</details>
 
-The repo also has a standalone shell script with the same behaviour, for benches where you can't
-or don't want to add an app. It also switches to the bench owner's group by itself.
+---
+
+## 🐚 Without installing: `dev.sh`
+
+A standalone shell script with the same behaviour, for benches where you can't add an app.
+It also activates the bench owner's group by itself.
 
 ```bash
-cd /path/to/your-bench
+cd /path/to/your-bench          # or any folder inside it
 /path/to/frappe-bench-dev/dev.sh [--site NAME] [--port PORT] [--bench DIR] [--no-watch] [--no-browser]
 ```
 
-`dev.sh` finds the bench by walking up from the current folder, so it works from any folder inside it.
+---
 
-## How it works
+## ⚙️ How it works
 
-1. Frappe loads `frappe_bench_dev/commands.py` from every app in `apps.txt`, which is how `bench dev` exists.
-2. Picks the site (`--site`, single site, or menu).
+<details>
+<summary><b>Step by step</b></summary>
+
+<br>
+
+1. Frappe loads `frappe_bench_dev/commands.py` from every app in `apps.txt`. That's how `bench dev` exists.
+2. Picks the site: `--site`, the only site, or the menu.
 3. Checks the port: reuses a running dev server for the site, refuses if something else is there.
 4. Starts `bench --site SITE serve --port PORT` and `bench watch`, each in its own process group.
-5. Polls `/api/method/ping` until the site answers (up to 90 seconds).
-6. Opens the URL with VS Code's `$BROWSER`, `open` (macOS), `wslview` (WSL) or the default browser (Linux).
-7. Streams both logs. On Ctrl+C it stops every process it started, including child processes.
+5. Polls `/api/method/ping` until the site answers (up to 90 s).
+6. Opens the URL via VS Code's `$BROWSER`, `open` (macOS), `wslview` (WSL) or the default browser (Linux).
+7. Streams both logs. On Ctrl+C it stops every process it started, children included.
 
-## License
+</details>
 
-MIT
+---
+
+<div align="center">
+
+MIT © Sohanur Rahman · [Report an issue](https://github.com/devsohanur653-lab/frappe-bench-dev/issues)
+
+</div>
